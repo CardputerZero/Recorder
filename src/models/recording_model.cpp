@@ -1,0 +1,720 @@
+#include "models/recording_model.hpp"
+#include "core/recorder_config.hpp"
+
+#define MINIAUDIO_IMPLEMENTATION
+#include <miniaudio.h>
+
+#include <algorithm>
+#include <atomic>
+#include <cctype>
+#include <chrono>
+#include <cmath>
+#include <cstdio>
+#include <cerrno>
+#include <ctime>
+#include <iomanip>
+#include <mutex>
+#include <sstream>
+#include <string>
+#include <utility>
+#include <vector>
+#include <spdlog/spdlog.h>
+#include <unistd.h>
+
+namespace recorder {
+
+namespace {
+
+constexpr ma_uint32 kCaptureChannels   = 1;
+constexpr ma_uint32 kCaptureSampleRate = 48000;
+constexpr ma_format kCaptureFormat     = ma_format_f32;
+constexpr size_t kPreviewSampleCount   = 24;
+constexpr size_t kSpectrumBinCount     = 24;
+constexpr float kSpectrumMinHz         = 80.0f;
+constexpr float kSpectrumMaxHz         = 6000.0f;
+constexpr float kSpectrumGain          = 55.0f;
+constexpr float kPi                    = 3.14159265358979323846f;
+constexpr auto kStartCooldown          = std::chrono::milliseconds(300);
+constexpr auto kMonitorRetryInterval   = std::chrono::milliseconds(2000);
+
+std::string makeRecordingPath(const std::string& dir)
+{
+    auto now             = std::chrono::system_clock::now();
+    std::time_t now_time = std::chrono::system_clock::to_time_t(now);
+    std::tm tm{};
+#if defined(_WIN32)
+    localtime_s(&tm, &now_time);
+#else
+    localtime_r(&now_time, &tm);
+#endif
+
+    std::ostringstream name;
+    name << dir << "/" << std::put_time(&tm, "%Y%m%d_%H%M%S") << ".wav";
+    return name.str();
+}
+
+std::string directoryName(const std::string& path)
+{
+    const size_t pos = path.find_last_of('/');
+    if (pos == std::string::npos) {
+        return ".";
+    }
+    if (pos == 0) {
+        return "/";
+    }
+    return path.substr(0, pos);
+}
+
+std::string baseName(const std::string& path)
+{
+    const size_t pos = path.find_last_of('/');
+    if (pos == std::string::npos) {
+        return path;
+    }
+    return path.substr(pos + 1);
+}
+
+std::string stripWavExtension(const std::string& name)
+{
+    if (name.size() >= 4) {
+        std::string ext = name.substr(name.size() - 4);
+        std::transform(ext.begin(), ext.end(), ext.begin(),
+                       [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+        if (ext == ".wav") {
+            return name.substr(0, name.size() - 4);
+        }
+    }
+    return name;
+}
+
+std::string sanitizeRecordingName(const std::string& name)
+{
+    std::string sanitized;
+    sanitized.reserve(name.size());
+    for (char c : stripWavExtension(name)) {
+        const auto uc = static_cast<unsigned char>(c);
+        if (std::isalnum(uc) || c == '_' || c == '-' || c == ' ') {
+            sanitized.push_back(c);
+        }
+    }
+
+    while (!sanitized.empty() && sanitized.front() == ' ') {
+        sanitized.erase(sanitized.begin());
+    }
+    while (!sanitized.empty() && sanitized.back() == ' ') {
+        sanitized.pop_back();
+    }
+
+    return sanitized.empty() ? "recording" : sanitized;
+}
+
+std::string makeUniqueRecordingPath(const std::string& dir, const std::string& name, const std::string& currentPath)
+{
+    const std::string base = sanitizeRecordingName(name);
+    for (int i = 0; i < 1000; ++i) {
+        std::ostringstream candidate;
+        candidate << dir << "/" << base;
+        if (i > 0) {
+            candidate << "_" << i;
+        }
+        candidate << ".wav";
+
+        const std::string path = candidate.str();
+        if (path == currentPath || access(path.c_str(), F_OK) != 0) {
+            return path;
+        }
+    }
+
+    return dir + "/" + base + ".wav";
+}
+
+const char* maResultName(ma_result result)
+{
+    switch (result) {
+        case MA_SUCCESS:
+            return "MA_SUCCESS";
+        case MA_NO_BACKEND:
+            return "MA_NO_BACKEND";
+        case MA_NO_DEVICE:
+            return "MA_NO_DEVICE";
+        case MA_DEVICE_NOT_INITIALIZED:
+            return "MA_DEVICE_NOT_INITIALIZED";
+        case MA_FAILED_TO_INIT_BACKEND:
+            return "MA_FAILED_TO_INIT_BACKEND";
+        case MA_FAILED_TO_OPEN_BACKEND_DEVICE:
+            return "MA_FAILED_TO_OPEN_BACKEND_DEVICE";
+        default:
+            return "MA_ERROR";
+    }
+}
+
+float spectrumFrequency(size_t index)
+{
+    if (kSpectrumBinCount <= 1) {
+        return kSpectrumMinHz;
+    }
+
+    const float ratio = static_cast<float>(index) / static_cast<float>(kSpectrumBinCount - 1);
+    return kSpectrumMinHz * std::pow(kSpectrumMaxHz / kSpectrumMinHz, ratio);
+}
+
+float goertzelMagnitude(const float* samples, ma_uint32 frame_count, float frequency)
+{
+    if (!samples || frame_count == 0 || frequency <= 0.0f) {
+        return 0.0f;
+    }
+
+    const float omega = 2.0f * kPi * frequency / static_cast<float>(kCaptureSampleRate);
+    const float coeff = 2.0f * std::cos(omega);
+    float q0          = 0.0f;
+    float q1          = 0.0f;
+    float q2          = 0.0f;
+
+    for (ma_uint32 i = 0; i < frame_count; ++i) {
+        q0 = coeff * q1 - q2 + samples[i];
+        q2 = q1;
+        q1 = q0;
+    }
+
+    const float power = q1 * q1 + q2 * q2 - coeff * q1 * q2;
+    return std::sqrt(std::max(power, 0.0f)) / static_cast<float>(frame_count);
+}
+
+void fillSpectrum(AudioFrame& frame, const float* samples, ma_uint32 frame_count)
+{
+    frame.spectrum.assign(kSpectrumBinCount, 0.0f);
+    if (!samples || frame_count == 0) {
+        return;
+    }
+
+    for (size_t i = 0; i < frame.spectrum.size(); ++i) {
+        const float frequency = spectrumFrequency(i);
+        const float magnitude = goertzelMagnitude(samples, frame_count, frequency);
+        frame.spectrum[i]     = std::clamp(std::pow(magnitude * kSpectrumGain, 0.55f), 0.0f, 1.0f);
+    }
+}
+
+}  // namespace
+
+struct RecordingModel::Impl {
+    explicit Impl(std::string dir) : recordings_dir(normalizeRecordingDirectory(dir))
+    {
+    }
+
+    std::string recordings_dir;
+    ma_context context{};
+    ma_device device{};
+    ma_encoder encoder{};
+    ma_device_id capture_device_id{};
+
+    bool context_inited        = false;
+    bool device_inited         = false;
+    bool encoder_inited        = false;
+    bool has_capture_device_id = false;
+
+    std::string current_path;
+    std::mutex encoder_mutex;
+    std::mutex frame_mutex;
+    AudioFrame latest_frame;
+    bool has_new_frame = false;
+    std::atomic<uint64_t> captured_frames{0};
+    std::atomic<bool> writing_enabled{false};
+    std::chrono::steady_clock::time_point next_start_time{};
+    std::chrono::steady_clock::time_point next_monitor_retry_time{};
+
+    ~Impl()
+    {
+        cleanup();
+    }
+
+    bool ensureMonitor()
+    {
+        if (device_inited) {
+            return true;
+        }
+
+        auto now = std::chrono::steady_clock::now();
+        if (now < next_monitor_retry_time) {
+            return false;
+        }
+
+        if (startMonitor()) {
+            return true;
+        }
+
+        next_monitor_retry_time = now + kMonitorRetryInterval;
+        return false;
+    }
+
+    bool startRecording()
+    {
+        if (!ensureMonitor()) {
+            spdlog::error("RecordingModel: start recording failed, capture monitor is unavailable");
+            return false;
+        }
+
+        if (!ensureDirectoryExists(recordings_dir, "RecordingModel")) {
+            spdlog::error("RecordingModel: start recording failed, recordingsDir={}", recordings_dir);
+            return false;
+        }
+
+        current_path = makeRecordingPath(recordings_dir);
+        captured_frames.store(0);
+
+        ma_encoder_config encoder_config =
+            ma_encoder_config_init(ma_encoding_format_wav, kCaptureFormat, kCaptureChannels, kCaptureSampleRate);
+        {
+            std::lock_guard<std::mutex> lock(encoder_mutex);
+            cleanupEncoderLocked();
+
+            ma_result result = ma_encoder_init_file(current_path.c_str(), &encoder_config, &encoder);
+            if (result != MA_SUCCESS) {
+                spdlog::error("RecordingModel: ma_encoder_init_file failed, result={} {}, path={}",
+                              static_cast<int>(result), maResultName(result), current_path);
+                current_path.clear();
+                return false;
+            }
+            encoder_inited = true;
+        }
+
+        writing_enabled.store(true);
+        spdlog::info("RecordingModel: started recording path={}, channels={}, sampleRate={}", current_path,
+                     kCaptureChannels, kCaptureSampleRate);
+        return true;
+    }
+
+    bool pauseRecording()
+    {
+        {
+            std::lock_guard<std::mutex> lock(encoder_mutex);
+            if (!encoder_inited) {
+                return false;
+            }
+        }
+
+        writing_enabled.store(false);
+        spdlog::info("RecordingModel: paused recording path={}, capturedFrames={}", current_path,
+                     captured_frames.load());
+        return true;
+    }
+
+    bool resumeRecording()
+    {
+        {
+            std::lock_guard<std::mutex> lock(encoder_mutex);
+            if (!encoder_inited) {
+                return false;
+            }
+        }
+
+        writing_enabled.store(true);
+        spdlog::info("RecordingModel: resumed recording path={}", current_path);
+        return true;
+    }
+
+    PendingRecordingFile stopRecording()
+    {
+        writing_enabled.store(false);
+
+        uint64_t frames  = captured_frames.load();
+        std::string path = current_path;
+
+        {
+            std::lock_guard<std::mutex> lock(encoder_mutex);
+            cleanupEncoderLocked();
+        }
+        current_path.clear();
+
+        float duration_sec = kCaptureSampleRate == 0 ? 0.0f : static_cast<float>(frames) / kCaptureSampleRate;
+        if (!path.empty()) {
+            spdlog::info("RecordingModel: stopped recording path={}, frames={}, duration={:.2f}s", path, frames,
+                         duration_sec);
+        }
+
+        PendingRecordingFile pending;
+        pending.active      = !path.empty();
+        pending.path        = path;
+        pending.name        = stripWavExtension(baseName(path));
+        pending.durationSec = static_cast<uint32_t>(std::round(duration_sec));
+        return pending;
+    }
+
+    bool startMonitor()
+    {
+        cleanup();
+
+        {
+            std::lock_guard<std::mutex> lock(frame_mutex);
+            latest_frame = AudioFrame{};
+            latest_frame.samples.assign(kPreviewSampleCount, 0.5f);
+            latest_frame.spectrum.assign(kSpectrumBinCount, 0.0f);
+            has_new_frame = true;
+        }
+
+        if (!initContext()) {
+            cleanup();
+            return false;
+        }
+
+        logCaptureDevices();
+        selectCaptureDevice();
+
+        ma_device_config device_config  = ma_device_config_init(ma_device_type_capture);
+        device_config.capture.format    = kCaptureFormat;
+        device_config.capture.channels  = kCaptureChannels;
+        device_config.capture.pDeviceID = has_capture_device_id ? &capture_device_id : nullptr;
+        device_config.sampleRate        = kCaptureSampleRate;
+        device_config.dataCallback      = dataCallback;
+        device_config.pUserData         = this;
+
+        ma_result result = ma_device_init(&context, &device_config, &device);
+        if (result != MA_SUCCESS) {
+            spdlog::error("RecordingModel: ma_device_init capture failed, result={} {}", static_cast<int>(result),
+                          maResultName(result));
+            cleanup();
+            return false;
+        }
+        device_inited = true;
+
+        result = ma_device_start(&device);
+        if (result != MA_SUCCESS) {
+            spdlog::error("RecordingModel: ma_device_start capture failed, result={} {}", static_cast<int>(result),
+                          maResultName(result));
+            cleanup();
+            return false;
+        }
+
+        spdlog::info("RecordingModel: capture monitor started, channels={}, sampleRate={}", kCaptureChannels,
+                     kCaptureSampleRate);
+        return true;
+    }
+
+    bool consumeFrame(AudioFrame& out)
+    {
+        std::lock_guard<std::mutex> lock(frame_mutex);
+        if (!has_new_frame) {
+            return false;
+        }
+
+        out           = latest_frame;
+        has_new_frame = false;
+        return true;
+    }
+
+    uint32_t elapsedSec() const
+    {
+        if (kCaptureSampleRate == 0) {
+            return 0;
+        }
+        return static_cast<uint32_t>(captured_frames.load() / kCaptureSampleRate);
+    }
+
+    uint32_t startCooldownRemainingMs() const
+    {
+        auto now = std::chrono::steady_clock::now();
+        if (now >= next_start_time) {
+            return 0;
+        }
+        return static_cast<uint32_t>(
+            std::chrono::duration_cast<std::chrono::milliseconds>(next_start_time - now).count());
+    }
+
+    void armStartCooldown()
+    {
+        next_start_time = std::chrono::steady_clock::now() + kStartCooldown;
+    }
+
+    void cleanup()
+    {
+        writing_enabled.store(false);
+
+        if (device_inited) {
+            ma_device_uninit(&device);
+            device_inited = false;
+        }
+
+        {
+            std::lock_guard<std::mutex> lock(encoder_mutex);
+            cleanupEncoderLocked();
+        }
+
+        if (context_inited) {
+            ma_context_uninit(&context);
+            context_inited = false;
+        }
+
+        has_capture_device_id = false;
+        current_path.clear();
+    }
+
+    void cleanupEncoderLocked()
+    {
+        if (encoder_inited) {
+            ma_encoder_uninit(&encoder);
+            encoder_inited = false;
+        }
+    }
+
+    bool initContext()
+    {
+#if RECORDER_USE_PULSEAUDIO
+        ma_backend backends[] = {ma_backend_pulseaudio};
+        ma_result result      = ma_context_init(backends, 1, nullptr, &context);
+        if (result != MA_SUCCESS) {
+            spdlog::error("RecordingModel: ma_context_init PulseAudio failed, result={} {}", static_cast<int>(result),
+                          maResultName(result));
+            return false;
+        }
+        spdlog::info("RecordingModel: miniaudio context initialized with PulseAudio backend");
+#else
+        ma_result result = ma_context_init(nullptr, 0, nullptr, &context);
+        if (result != MA_SUCCESS) {
+            spdlog::error("RecordingModel: ma_context_init default backend failed, result={} {}",
+                          static_cast<int>(result), maResultName(result));
+            return false;
+        }
+        spdlog::info("RecordingModel: miniaudio context initialized with default backend");
+#endif
+        context_inited = true;
+        return true;
+    }
+
+    void logCaptureDevices()
+    {
+        ma_device_info* playback_infos = nullptr;
+        ma_uint32 playback_count       = 0;
+        ma_device_info* capture_infos  = nullptr;
+        ma_uint32 capture_count        = 0;
+
+        ma_result result =
+            ma_context_get_devices(&context, &playback_infos, &playback_count, &capture_infos, &capture_count);
+        if (result != MA_SUCCESS) {
+            spdlog::warn("RecordingModel: ma_context_get_devices failed, result={} {}", static_cast<int>(result),
+                         maResultName(result));
+            return;
+        }
+
+        spdlog::info("RecordingModel: capture devices count={}", capture_count);
+        for (ma_uint32 i = 0; i < capture_count; ++i) {
+            spdlog::info("RecordingModel: capture[{}] {}{}", i, capture_infos[i].name,
+                         capture_infos[i].isDefault ? " [default]" : "");
+        }
+    }
+
+    void selectCaptureDevice()
+    {
+        ma_device_info* playback_infos = nullptr;
+        ma_uint32 playback_count       = 0;
+        ma_device_info* capture_infos  = nullptr;
+        ma_uint32 capture_count        = 0;
+
+        ma_result result =
+            ma_context_get_devices(&context, &playback_infos, &playback_count, &capture_infos, &capture_count);
+        if (result != MA_SUCCESS) {
+            return;
+        }
+
+        for (ma_uint32 i = 0; i < capture_count; ++i) {
+            std::string name = capture_infos[i].name;
+            if (name.find("ES8388") != std::string::npos || name.find("ES8389") != std::string::npos) {
+                capture_device_id     = capture_infos[i].id;
+                has_capture_device_id = true;
+                spdlog::info("RecordingModel: selected ES8388/ES8389 capture device: {}", name);
+                return;
+            }
+        }
+
+        spdlog::info("RecordingModel: using default capture device");
+    }
+
+    static void dataCallback(ma_device* device, void* output, const void* input, ma_uint32 frame_count)
+    {
+        (void)output;
+
+        auto* self = static_cast<Impl*>(device->pUserData);
+        if (!self || !input || frame_count == 0) {
+            return;
+        }
+
+        const auto* samples      = static_cast<const float*>(input);
+        ma_uint64 frames_written = 0;
+        if (self->writing_enabled.load()) {
+            std::lock_guard<std::mutex> lock(self->encoder_mutex);
+            if (self->encoder_inited && self->writing_enabled.load()) {
+                ma_encoder_write_pcm_frames(&self->encoder, input, frame_count, &frames_written);
+            }
+        }
+        if (frames_written > 0) {
+            self->captured_frames.fetch_add(frames_written);
+        }
+
+        AudioFrame frame;
+        frame.samples.assign(kPreviewSampleCount, 0.0f);
+
+        float sum_abs = 0.0f;
+        size_t step   = std::max<size_t>(1, frame_count / kPreviewSampleCount);
+        for (ma_uint32 i = 0; i < frame_count; ++i) {
+            sum_abs += std::abs(samples[i]);
+        }
+
+        for (size_t i = 0; i < frame.samples.size(); ++i) {
+            size_t sample_index = std::min<size_t>(i * step, frame_count - 1);
+            frame.samples[i]    = std::clamp((samples[sample_index] + 1.0f) * 0.5f, 0.0f, 1.0f);
+        }
+
+        frame.amp = std::clamp(sum_abs / static_cast<float>(frame_count), 0.0f, 1.0f);
+        fillSpectrum(frame, samples, frame_count);
+
+        {
+            std::lock_guard<std::mutex> lock(self->frame_mutex);
+            self->latest_frame  = std::move(frame);
+            self->has_new_frame = true;
+        }
+    }
+};
+
+RecordingModel::RecordingModel() : RecordingModel(defaultRecordingsDirectory())
+{
+}
+
+RecordingModel::RecordingModel(std::string recordings_dir) : _impl(std::make_unique<Impl>(std::move(recordings_dir)))
+{
+    spdlog::info("RecordingModel: recordingsDir={}", _impl->recordings_dir);
+    _impl->ensureMonitor();
+}
+
+RecordingModel::~RecordingModel()
+{
+    stop();
+}
+
+void RecordingModel::start()
+{
+    if (_pending_recording.get().active) {
+        spdlog::info("RecordingModel: start ignored, pending recording requires confirmation");
+        return;
+    }
+
+    if (_state.get() == RecordingState::Recording) {
+        spdlog::info("RecordingModel: start ignored, already recording");
+        return;
+    }
+
+    if (_state.get() == RecordingState::Paused) {
+        stop();
+    }
+
+    uint32_t remaining_ms = _impl->startCooldownRemainingMs();
+    if (remaining_ms > 0) {
+        spdlog::info("RecordingModel: start ignored, cooldownRemaining={}ms", remaining_ms);
+        return;
+    }
+
+    spdlog::info("RecordingModel: start requested");
+    if (_impl->startRecording()) {
+        _elapsed_sec.set(0);
+        _state.set(RecordingState::Recording);
+    } else {
+        _impl->armStartCooldown();
+        _state.set(RecordingState::Idle);
+        _elapsed_sec.set(0);
+    }
+}
+
+void RecordingModel::stop()
+{
+    if (!_impl) {
+        return;
+    }
+
+    if (_state.get() == RecordingState::Idle) {
+        return;
+    }
+
+    spdlog::info("RecordingModel: stop requested");
+    PendingRecordingFile pending = _impl->stopRecording();
+    _impl->armStartCooldown();
+    _state.set(RecordingState::Idle);
+    _elapsed_sec.set(0);
+    if (pending.active) {
+        _pending_recording.set(std::move(pending));
+    }
+}
+
+void RecordingModel::pause()
+{
+    if (_state.get() == RecordingState::Recording) {
+        spdlog::info("RecordingModel: pause requested");
+        if (_impl->pauseRecording()) {
+            _state.set(RecordingState::Paused);
+        }
+    }
+}
+
+void RecordingModel::resume()
+{
+    if (_state.get() == RecordingState::Paused) {
+        spdlog::info("RecordingModel: resume requested");
+        if (_impl->resumeRecording()) {
+            _state.set(RecordingState::Recording);
+        }
+    }
+}
+
+bool RecordingModel::confirmPendingRecording(const std::string& name)
+{
+    PendingRecordingFile pending = _pending_recording.get();
+    if (!pending.active) {
+        return false;
+    }
+
+    const std::string dir      = directoryName(pending.path);
+    const std::string new_path = makeUniqueRecordingPath(dir, name, pending.path);
+
+    if (new_path != pending.path && std::rename(pending.path.c_str(), new_path.c_str()) != 0) {
+        spdlog::error("RecordingModel: rename pending recording failed, from={}, to={}, errno={}", pending.path,
+                      new_path, errno);
+        return false;
+    }
+
+    spdlog::info("RecordingModel: confirmed recording path={}", new_path);
+    _pending_recording.set(PendingRecordingFile{});
+    return true;
+}
+
+bool RecordingModel::discardPendingRecording()
+{
+    PendingRecordingFile pending = _pending_recording.get();
+    if (!pending.active) {
+        return false;
+    }
+
+    if (std::remove(pending.path.c_str()) != 0) {
+        spdlog::warn("RecordingModel: discard pending recording failed, path={}, errno={}", pending.path, errno);
+    } else {
+        spdlog::info("RecordingModel: discarded pending recording path={}", pending.path);
+    }
+
+    _pending_recording.set(PendingRecordingFile{});
+    return true;
+}
+
+void RecordingModel::tick(uint32_t nowMs)
+{
+    (void)nowMs;
+
+    _impl->ensureMonitor();
+
+    const uint32_t elapsed_sec = _state.get() == RecordingState::Idle ? 0 : _impl->elapsedSec();
+    if (_elapsed_sec.get() != elapsed_sec) {
+        _elapsed_sec.set(elapsed_sec);
+    }
+
+    AudioFrame next;
+    if (!_impl->consumeFrame(next)) {
+        return;
+    }
+    _frame.set(next);
+}
+
+}  // namespace recorder
