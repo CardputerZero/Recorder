@@ -13,7 +13,6 @@ STAGE_DIR="${STAGE_DIR:-${ROOT_DIR}/build/deb-root}"
 DIST_DIR="${DIST_DIR:-${ROOT_DIR}/dist}"
 BIN_NAME="M5CardputerZero-Recorder"
 PACKAGE_ICON_NAME="${PACKAGE_ICON_NAME:-m5cardputerzero-recorder.png}"
-RECORDINGS_DIR="${RECORDINGS_DIR:-\$HOME/Recordings}"
 CMAKE_BIN="${CMAKE:-cmake}"
 CMAKE_BUILD_TYPE="${CMAKE_BUILD_TYPE:-Release}"
 
@@ -95,9 +94,7 @@ mkdir -p \
     "${DIST_DIR}"
 
 install -m 755 "${EXECUTABLE}" "${STAGE_DIR}/usr/share/APPLaunch/bin/${BIN_NAME}"
-DESKTOP_EXEC="mkdir -p \"${RECORDINGS_DIR}\" && exec /usr/share/APPLaunch/bin/${BIN_NAME} --recordings-dir \"${RECORDINGS_DIR}\""
 sed \
-    -e "s|@DESKTOP_EXEC@|${DESKTOP_EXEC}|g" \
     -e "s|@PACKAGE_ICON_NAME@|${PACKAGE_ICON_NAME}|g" \
     "${DESKTOP_TEMPLATE}" >"${STAGE_DIR}/usr/share/APPLaunch/applications/recorder.desktop"
 install -m 644 "${ICON_FILE}" "${STAGE_DIR}/usr/share/APPLaunch/share/images/${PACKAGE_ICON_NAME}"

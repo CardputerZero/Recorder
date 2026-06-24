@@ -2,6 +2,7 @@
 #include <spdlog/spdlog.h>
 #include <cerrno>
 #include <cstdio>
+#include <cstdlib>
 #include <string>
 #include <sys/stat.h>
 #include <unistd.h>
@@ -22,7 +23,7 @@ std::string currentDirectory()
 
 bool isDirectory(const std::string& path)
 {
-    struct stat info{};
+    struct stat info {};
     return stat(path.c_str(), &info) == 0 && S_ISDIR(info.st_mode);
 }
 
@@ -44,11 +45,24 @@ bool ensureSingleDirectory(const std::string& path, const char* log_tag)
     return false;
 }
 
+std::string homeChildDirectory(const char* child, const char* fallback)
+{
+    const char* home = std::getenv("HOME");
+    if (home && home[0] != '\0') {
+        return std::string(home) + "/" + child;
+    }
+    return fallback;
+}
+
 }  // namespace
 
 std::string defaultRecordingsDirectory()
 {
+#if RECORDER_USE_SDL
     return normalizeRecordingDirectory("recordings");
+#else
+    return normalizeRecordingDirectory(homeChildDirectory("Recordings", "/tmp/Recordings"));
+#endif
 }
 
 RecorderConfig defaultRecorderConfig()
