@@ -11,7 +11,7 @@ namespace recorder {
 
 class RecorderKeypad {
 public:
-    using KeyCallback = std::function<void(uint32_t, const char*)>;
+    using KeyCallback = std::function<bool(uint32_t, const char*, bool)>;
 
     RecorderKeypad() = default;
     ~RecorderKeypad();
@@ -38,12 +38,15 @@ private:
     void pushKeyEvent(uint16_t code, int32_t value);
     uint32_t translateKey(uint16_t code) const;
     const char* keyUtf8(uint32_t key) const;
+    bool shiftPressed() const;
 
     lv_indev_t* _indev = nullptr;
     std::vector<int> _event_fds;
     std::deque<KeyEvent> _pending_keys;
     KeyCallback _key_callback;
-    uint32_t _last_key = 0;
+    uint32_t _last_key        = 0;
+    bool _left_shift_pressed  = false;
+    bool _right_shift_pressed = false;
 };
 
 }  // namespace recorder

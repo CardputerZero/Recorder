@@ -7,7 +7,7 @@ namespace recorder {
 
 namespace {
 
-bool textInputFocused()
+lv_obj_t* focusedTextInput()
 {
     lv_indev_t* indev = lv_indev_get_next(nullptr);
     while (indev) {
@@ -15,12 +15,59 @@ bool textInputFocused()
         if (group) {
             lv_obj_t* focused = lv_group_get_focused(group);
             if (focused && lv_obj_check_type(focused, &lv_textarea_class)) {
-                return true;
+                return focused;
             }
         }
         indev = lv_indev_get_next(indev);
     }
-    return false;
+    return nullptr;
+}
+
+bool textInputFocused()
+{
+    return focusedTextInput() != nullptr;
+}
+
+bool handleFocusedTextInput(uint32_t lv_key, const char* utf8, bool pressed)
+{
+    lv_obj_t* input = focusedTextInput();
+    if (!input) {
+        return false;
+    }
+
+    if (!pressed) {
+        return true;
+    }
+
+    switch (lv_key) {
+        case LV_KEY_BACKSPACE:
+            lv_textarea_delete_char(input);
+            return true;
+        case LV_KEY_DEL:
+            lv_textarea_delete_char_forward(input);
+            return true;
+        case LV_KEY_LEFT:
+            lv_textarea_cursor_left(input);
+            return true;
+        case LV_KEY_RIGHT:
+            lv_textarea_cursor_right(input);
+            return true;
+        case LV_KEY_HOME:
+            lv_textarea_set_cursor_pos(input, 0);
+            return true;
+        case LV_KEY_END:
+            lv_textarea_set_cursor_pos(input, LV_TEXTAREA_CURSOR_LAST);
+            return true;
+        default:
+            break;
+    }
+
+    if (utf8 && utf8[0] >= 0x20 && utf8[0] < 0x7f && utf8[1] == '\0') {
+        lv_textarea_add_text(input, utf8);
+        return true;
+    }
+
+    return true;
 }
 
 }  // namespace
@@ -76,39 +123,59 @@ void RecorderApp::onKey(uint32_t key)
 
 void RecorderApp::onLvglKey(uint32_t lv_key, const char* utf8)
 {
+    onLvglKeyState(lv_key, utf8, true);
+}
+
+bool RecorderApp::onLvglKeyState(uint32_t lv_key, const char* utf8, bool pressed)
+{
     if (lv_key == LV_KEY_ESC) {
-        onKey('\x1b');
-        return;
+        if (pressed) {
+            onKey('\x1b');
+        }
+        return true;
     }
 
     if (lv_key == LV_KEY_ENTER) {
-        onKey('\r');
-        return;
+        if (pressed) {
+            onKey('\r');
+        }
+        return true;
     }
 
+#if !LV_USE_SDL
+    if (handleFocusedTextInput(lv_key, utf8, pressed)) {
+        return true;
+    }
+#else
     if (textInputFocused()) {
-        return;
+        return true;
+    }
+#endif
+
+    if (!pressed) {
+        return true;
     }
 
     switch (lv_key) {
         case LV_KEY_UP:
             onKey(recorder_key::Up);
-            return;
+            return true;
         case LV_KEY_DOWN:
             onKey(recorder_key::Down);
-            return;
+            return true;
         default:
             break;
     }
 
     if (utf8 && utf8[0] == ' ') {
         onKey(' ');
-        return;
+        return true;
     }
 
     if (utf8 && utf8[0] >= '0' && utf8[0] <= '9') {
         onKey(static_cast<uint32_t>(utf8[0]));
     }
+    return true;
 }
 
 void RecorderApp::tick(uint32_t nowMs)
@@ -193,7 +260,7 @@ void RecorderApp::onRouteChanged(void* context, const PageId& page)
 
 void RecorderApp::onKeyboardEvent(lv_event_t* event)
 {
-    auto* self = static_cast<RecorderApp*>(lv_event_get_user_data(event));
+    auto* self  = static_cast<RecorderApp*>(lv_event_get_user_data(event));
     auto* indev = static_cast<lv_indev_t*>(lv_event_get_target(event));
     if (!self || !indev || lv_indev_get_state(indev) != LV_INDEV_STATE_PRESSED) {
         return;

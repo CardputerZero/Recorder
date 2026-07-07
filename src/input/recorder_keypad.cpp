@@ -51,6 +51,28 @@ bool envEnabled(const char* name, bool fallback)
            std::strcmp(value, "off") != 0 && std::strcmp(value, "OFF") != 0;
 }
 
+struct Tca8418KeymapEntry {
+    uint16_t code;
+    char text;
+};
+
+constexpr Tca8418KeymapEntry kTca8418Keymap[] = {
+    {183, '!'}, {184, '@'}, {185, '#'}, {186, '$'},  {187, '%'}, {188, '^'}, {189, '&'}, {190, '*'},
+    {191, '('}, {192, ')'}, {193, '~'}, {194, '`'},  {195, '+'}, {196, '-'}, {197, '/'}, {198, '\\'},
+    {199, '{'}, {200, '}'}, {201, '['}, {202, ']'},  {209, '='}, {210, ':'}, {211, ';'}, {212, '_'},
+    {213, '?'}, {214, '<'}, {215, '>'}, {216, '\''}, {217, '"'}, {231, ','}, {232, '.'}, {233, '|'},
+};
+
+uint32_t tca8418Utf8(uint16_t code)
+{
+    for (const auto& entry : kTca8418Keymap) {
+        if (entry.code == code) {
+            return static_cast<uint8_t>(entry.text);
+        }
+    }
+    return 0;
+}
+
 }  // namespace
 #endif
 
@@ -225,22 +247,43 @@ void RecorderKeypad::pushKeyEvent(uint16_t code, int32_t value)
         return;
     }
 
+#if !LV_USE_SDL && defined(__linux__)
+    if (code == KEY_LEFTSHIFT || code == KEY_RIGHTSHIFT) {
+        if (code == KEY_LEFTSHIFT) {
+            _left_shift_pressed = value == 1;
+        } else {
+            _right_shift_pressed = value == 1;
+        }
+        return;
+    }
+#endif
+
     const uint32_t key = translateKey(code);
     if (key == 0) {
         return;
     }
 
     const bool pressed = value == 1;
-    _pending_keys.push_back({key, pressed});
-
-    if (pressed && _key_callback) {
-        _key_callback(key, keyUtf8(key));
+    bool consumed      = false;
+    if (_key_callback) {
+        consumed = _key_callback(key, keyUtf8(key), pressed);
     }
+
+    if (consumed) {
+        return;
+    }
+
+    _pending_keys.push_back({key, pressed});
 }
 
 uint32_t RecorderKeypad::translateKey(uint16_t code) const
 {
 #if !LV_USE_SDL && defined(__linux__)
+    const bool shifted = shiftPressed();
+    if (const uint32_t tca8418_key = tca8418Utf8(code)) {
+        return tca8418_key;
+    }
+
     switch (code) {
         case KEY_ESC:
             return LV_KEY_ESC;
@@ -262,108 +305,134 @@ uint32_t RecorderKeypad::translateKey(uint16_t code) const
         case KEY_SPACE:
             return ' ';
         case KEY_A:
-            return 'a';
+            return shifted ? 'A' : 'a';
         case KEY_B:
-            return 'b';
+            return shifted ? 'B' : 'b';
         case KEY_C:
-            return 'c';
+            return shifted ? 'C' : 'c';
         case KEY_D:
-            return 'd';
+            return shifted ? 'D' : 'd';
         case KEY_E:
-            return 'e';
+            return shifted ? 'E' : 'e';
         case KEY_F:
-            return 'f';
+            return shifted ? 'F' : 'f';
         case KEY_G:
-            return 'g';
+            return shifted ? 'G' : 'g';
         case KEY_H:
-            return 'h';
+            return shifted ? 'H' : 'h';
         case KEY_I:
-            return 'i';
+            return shifted ? 'I' : 'i';
         case KEY_J:
-            return 'j';
+            return shifted ? 'J' : 'j';
         case KEY_K:
-            return 'k';
+            return shifted ? 'K' : 'k';
         case KEY_L:
-            return 'l';
+            return shifted ? 'L' : 'l';
         case KEY_M:
-            return 'm';
+            return shifted ? 'M' : 'm';
         case KEY_N:
-            return 'n';
+            return shifted ? 'N' : 'n';
         case KEY_O:
-            return 'o';
+            return shifted ? 'O' : 'o';
         case KEY_P:
-            return 'p';
+            return shifted ? 'P' : 'p';
         case KEY_Q:
-            return 'q';
+            return shifted ? 'Q' : 'q';
         case KEY_R:
-            return 'r';
+            return shifted ? 'R' : 'r';
         case KEY_S:
-            return 's';
+            return shifted ? 'S' : 's';
         case KEY_T:
-            return 't';
+            return shifted ? 'T' : 't';
         case KEY_U:
-            return 'u';
+            return shifted ? 'U' : 'u';
         case KEY_V:
-            return 'v';
+            return shifted ? 'V' : 'v';
         case KEY_W:
-            return 'w';
+            return shifted ? 'W' : 'w';
         case KEY_X:
-            return 'x';
+            return shifted ? 'X' : 'x';
         case KEY_Y:
-            return 'y';
+            return shifted ? 'Y' : 'y';
         case KEY_Z:
-            return 'z';
+            return shifted ? 'Z' : 'z';
         case KEY_0:
         case KEY_KP0:
-            return '0';
+            return shifted ? ')' : '0';
         case KEY_1:
         case KEY_KP1:
-            return '1';
+            return shifted ? '!' : '1';
         case KEY_2:
         case KEY_KP2:
-            return '2';
+            return shifted ? '@' : '2';
         case KEY_3:
         case KEY_KP3:
-            return '3';
+            return shifted ? '#' : '3';
         case KEY_4:
         case KEY_KP4:
-            return '4';
+            return shifted ? '$' : '4';
         case KEY_5:
         case KEY_KP5:
-            return '5';
+            return shifted ? '%' : '5';
         case KEY_6:
         case KEY_KP6:
-            return '6';
+            return shifted ? '^' : '6';
         case KEY_7:
         case KEY_KP7:
-            return '7';
+            return shifted ? '&' : '7';
         case KEY_8:
         case KEY_KP8:
-            return '8';
+            return shifted ? '*' : '8';
         case KEY_9:
         case KEY_KP9:
-            return '9';
-        case KEY_MINUS:
-        case KEY_KPMINUS:
-            return '-';
-        case KEY_DOT:
+            return shifted ? '(' : '9';
         case KEY_KPDOT:
             return '.';
-        case KEY_COMMA:
+        case KEY_KPCOMMA:
+        case KEY_KPJPCOMMA:
             return ',';
-        case KEY_SLASH:
+        case KEY_KPMINUS:
+            return '-';
+        case KEY_KPPLUS:
+            return '+';
+        case KEY_KPASTERISK:
+            return '*';
         case KEY_KPSLASH:
             return '/';
-        case 195:
-            return '+';
-        case 196:
-            return '-';
-        case 197:
-            return '/';
-        case 231:
-            return ',';
-        case 232:
-            return '.';
+        case KEY_KPEQUAL:
+            return '=';
+        case KEY_KPLEFTPAREN:
+            return '(';
+        case KEY_KPRIGHTPAREN:
+            return ')';
+        case KEY_MINUS:
+            return shifted ? '_' : '-';
+        case KEY_EQUAL:
+            return shifted ? '+' : '=';
+        case KEY_LEFTBRACE:
+            return shifted ? '{' : '[';
+        case KEY_RIGHTBRACE:
+            return shifted ? '}' : ']';
+        case KEY_BACKSLASH:
+            return shifted ? '|' : '\\';
+        case KEY_SEMICOLON:
+            return shifted ? ':' : ';';
+        case KEY_APOSTROPHE:
+            return shifted ? '"' : '\'';
+        case KEY_GRAVE:
+            return shifted ? '~' : '`';
+        case KEY_COMMA:
+            return shifted ? '<' : ',';
+        case KEY_DOT:
+            return shifted ? '>' : '.';
+        case KEY_SLASH:
+            return shifted ? '?' : '/';
+        case KEY_102ND:
+            return shifted ? '>' : '<';
+        case KEY_YEN:
+            return shifted ? '|' : '\\';
+        case KEY_RO:
+            return shifted ? '_' : '\\';
         default:
             return 0;
     }
@@ -371,6 +440,11 @@ uint32_t RecorderKeypad::translateKey(uint16_t code) const
     (void)code;
     return 0;
 #endif
+}
+
+bool RecorderKeypad::shiftPressed() const
+{
+    return _left_shift_pressed || _right_shift_pressed;
 }
 
 const char* RecorderKeypad::keyUtf8(uint32_t key) const
