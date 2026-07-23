@@ -127,5 +127,5 @@ build with PulseAudio and produces an `arm64` APPLaunch package.
 The generated package is written to `dist/`:
 
 ```text
-dist/m5cardputerzero-recorder_0.1.1_m5stack1_arm64.deb
+dist/m5cardputerzero-recorder_0.1.3_m5stack1_arm64.deb
 ```

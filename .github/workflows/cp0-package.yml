@@ -37,6 +37,16 @@ jobs:
       - name: Bootstrap third-party dependencies
         run: ./bootstrap.sh
 
+      - name: Run unit tests
+        run: |
+          cmake -S . -B build/tests \
+            -DRECORDER_USE_SDL=OFF \
+            -DRECORDER_USE_PULSEAUDIO=OFF \
+            -DRECORDER_CONVERT_ASSETS=OFF \
+            -DBUILD_TESTING=ON
+          cmake --build build/tests --target recorder_playback_gain_tests -j2
+          ctest --test-dir build/tests --output-on-failure
+
       - name: Build cp0 package
         run: ./packaging/deb/package_deb.sh
 

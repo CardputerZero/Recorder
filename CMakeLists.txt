@@ -1,10 +1,13 @@
 cmake_minimum_required(VERSION 3.16)
 
-project(M5CardputerZeroRecorder VERSION 0.1.2 LANGUAGES C CXX ASM)
+project(M5CardputerZeroRecorder VERSION 0.1.3 LANGUAGES C CXX ASM)
 
 option(RECORDER_USE_SDL "Use LVGL's SDL backend for desktop testing" ON)
 option(RECORDER_CONVERT_ASSETS "Convert image assets during CMake configure" ON)
+option(BUILD_TESTING "Build Recorder tests" OFF)
 set(RECORDER_BIN_NAME "M5CardputerZero-Recorder" CACHE STRING "Output executable name")
+
+include(CTest)
 
 if(NOT DEFINED RECORDER_USE_PULSEAUDIO)
     if(RECORDER_USE_SDL)
@@ -196,3 +199,14 @@ target_link_libraries(${RECORDER_BIN_NAME} PRIVATE
 set_target_properties(${RECORDER_BIN_NAME} PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${RECORDER_ROOT}/dist"
 )
+
+if(BUILD_TESTING)
+    add_executable(recorder_playback_gain_tests
+        tests/playback_gain_test.cpp
+        src/models/playback_gain.cpp
+    )
+    target_include_directories(recorder_playback_gain_tests PRIVATE
+        "${RECORDER_SRC_DIR}"
+    )
+    add_test(NAME recorder_playback_gain COMMAND recorder_playback_gain_tests)
+endif()
