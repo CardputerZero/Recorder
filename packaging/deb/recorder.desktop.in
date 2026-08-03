@@ -1,5 +1,5 @@
 [Desktop Entry]
-Name=REC
+Name=Rec
 Exec=/usr/share/APPLaunch/bin/M5CardputerZero-Recorder
 Terminal=false
 Icon=share/images/@PACKAGE_ICON_NAME@
