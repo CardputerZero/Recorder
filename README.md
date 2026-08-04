@@ -9,6 +9,7 @@ Audio recorder app for M5Stack CardputerZero.
 - Confirm, rename, or discard a recording after stopping
 - Browse and delete saved recordings
 - Play recordings with seek and 1x/2x/5x speed controls
+- Adjust or mute system playback volume with the CardputerZero Fn media keys
 
 ## Dependencies
 
@@ -26,6 +27,7 @@ System packages expected by the build:
 - CMake and a C/C++ compiler
 - SDL2 development files for `RECORDER_USE_SDL=ON`
 - PulseAudio development files for `RECORDER_USE_PULSEAUDIO=ON`
+- `pactl` from `pulseaudio-utils` for device volume shortcuts
 - `python3-venv` so `bootstrap.sh` can create `.venv/`
 - `aarch64-linux-gnu-gcc/g++` for cross-building the CardputerZero package
 
@@ -112,6 +114,7 @@ Key controls:
 - Recording page: `6` start/stop, `5` pause/resume, `4` waveform mode, `8` files, `Esc` exit
 - Files page: `5`/`6` or Up/Down select, `7` or Enter play, `8` delete, `4` or Esc back
 - Playback page: `5` back 10s, `6` play/pause, `7` forward 10s, `8` speed, `4` or Esc back
+- Any page: Fn volume up/down changes the system volume; Fn mute toggles mute
 
 ## Package
 

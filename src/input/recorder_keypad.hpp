@@ -1,5 +1,6 @@
 #pragma once
 
+#include "core/recorder_types.hpp"
 #include <lvgl.h>
 #include <cstdint>
 #include <deque>
@@ -11,7 +12,8 @@ namespace recorder {
 
 class RecorderKeypad {
 public:
-    using KeyCallback = std::function<bool(uint32_t, const char*, bool)>;
+    using KeyCallback      = std::function<bool(uint32_t, const char*, bool)>;
+    using MediaKeyCallback = std::function<void(MediaKey, bool, bool)>;
 
     RecorderKeypad() = default;
     ~RecorderKeypad();
@@ -25,6 +27,7 @@ public:
     void poll();
     lv_indev_t* indev() const;
     void setKeyCallback(KeyCallback callback);
+    void setMediaKeyCallback(MediaKeyCallback callback);
 
 private:
     struct KeyEvent {
@@ -44,6 +47,7 @@ private:
     std::vector<int> _event_fds;
     std::deque<KeyEvent> _pending_keys;
     KeyCallback _key_callback;
+    MediaKeyCallback _media_key_callback;
     uint32_t _last_key        = 0;
     bool _left_shift_pressed  = false;
     bool _right_shift_pressed = false;
