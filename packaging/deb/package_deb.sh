@@ -107,7 +107,7 @@ Section: utils
 Priority: optional
 Architecture: ${DEB_ARCH}
 Maintainer: ${MAINTAINER}
-Depends: libc6, libstdc++6, libgcc-s1, libpulse0, pulseaudio-utils
+Depends: libc6, libstdc++6, libgcc-s1, libpulse0
 Installed-Size: ${INSTALLED_SIZE}
 Description: Recorder application for M5CardputerZero APPLaunch
  Recorder application, launcher entry, and runtime icon.

@@ -14,12 +14,6 @@ constexpr uint32_t Down = 0x10000002;
 
 }  // namespace recorder_key
 
-enum class MediaKey {
-    VolumeUp,
-    VolumeDown,
-    Mute,
-};
-
 enum class PageId {
     Recording,
     Files,

@@ -104,7 +104,6 @@ void RecorderApp::start()
     lv_obj_set_style_bg_color(lv_screen_active(), lv_color_hex(0x000000), LV_PART_MAIN);
     lv_obj_set_style_bg_opa(lv_screen_active(), LV_OPA_COVER, LV_PART_MAIN);
     setupInputGroup();
-    _volume_hud.start(lv_layer_top());
     _route_observer_id = _router.currentPage().observe(this, onRouteChanged);
     setCurrentPage(_router.page());
 }
@@ -179,32 +178,6 @@ bool RecorderApp::onLvglKeyState(uint32_t lv_key, const char* utf8, bool pressed
     return true;
 }
 
-void RecorderApp::onMediaKeyState(MediaKey key, bool pressed, bool repeated)
-{
-    if (!pressed || (key == MediaKey::Mute && repeated)) {
-        return;
-    }
-
-    switch (key) {
-        case MediaKey::VolumeUp:
-        case MediaKey::VolumeDown: {
-            const int delta                 = key == MediaKey::VolumeUp ? 5 : -5;
-            const SystemVolumeResult result = _system_volume_model.adjustVolume(delta);
-            if (result.success) {
-                _volume_hud.showVolume(result.state.percent);
-            }
-            return;
-        }
-        case MediaKey::Mute: {
-            const SystemVolumeResult result = _system_volume_model.toggleMute();
-            if (result.success) {
-                _volume_hud.showMute(result.state.muted, result.state.percent);
-            }
-            return;
-        }
-    }
-}
-
 void RecorderApp::tick(uint32_t nowMs)
 {
     if (_current_vm) {
@@ -213,7 +186,6 @@ void RecorderApp::tick(uint32_t nowMs)
     if (_current_view) {
         _current_view->tick(nowMs);
     }
-    _volume_hud.tick(nowMs);
 }
 
 ViewModel* RecorderApp::viewModelFor(PageId page)
