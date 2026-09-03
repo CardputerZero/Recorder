@@ -109,7 +109,9 @@ Packaged CardputerZero launches use `$HOME/Recordings` by default.
 
 Key controls:
 
-- Recording page: `6` start/stop, `5` pause/resume, `4` waveform mode, `8` files, `Esc` exit
+- Help: `Fn+H` on CardputerZero (`H` on desktop) opens the help page; `Esc` or `Fn+H` closes it
+- Hold `Esc` on the recording page to exit
+- Recording page: `6` start/stop, `5` pause/resume, `4` waveform mode, `8` files
 - Files page: `5`/`6` or Up/Down select, `7` or Enter play, `8` delete, `4` or Esc back
 - Playback page: `5` back 10s, `6` play/pause, `7` forward 10s, `8` speed, `4` or Esc back
 

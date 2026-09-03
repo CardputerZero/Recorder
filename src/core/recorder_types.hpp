@@ -11,6 +11,7 @@ namespace recorder_key {
 
 constexpr uint32_t Up   = 0x10000001;
 constexpr uint32_t Down = 0x10000002;
+constexpr uint32_t Help = 0x10000003;
 
 }  // namespace recorder_key
 

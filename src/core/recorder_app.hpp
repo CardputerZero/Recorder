@@ -8,6 +8,7 @@
 #include "view_models/files_view_model.hpp"
 #include "view_models/playback_view_model.hpp"
 #include "view_models/recording_view_model.hpp"
+#include "views/help_view.hpp"
 #include "views/recording_files_view.hpp"
 #include "views/playback_view.hpp"
 #include "views/recording_view.hpp"
@@ -55,11 +56,18 @@ private:
     RecordingView _recording_view;
     RecordingFilesView _recording_files_view;
     PlaybackView _playback_view;
+    HelpView _help_view;
+    lv_obj_t* _exit_hint      = nullptr;
     ViewModel* _current_vm    = nullptr;
     View* _current_view       = nullptr;
     lv_group_t* _input_group  = nullptr;
     size_t _route_observer_id = 0;
     bool _quit_requested      = false;
+    bool _esc_pressed         = false;
+    bool _esc_long_consumed   = false;
+    bool _esc_exit_armed      = false;
+    bool _help_pressed        = false;
+    uint32_t _esc_pressed_at  = 0;
 
     std::array<ViewModel*, 3> _view_models;
     std::array<View*, 3> _views;
@@ -68,6 +76,10 @@ private:
     View* viewFor(PageId page);
     void setupInputGroup();
     void setCurrentPage(PageId page);
+    void createExitHint();
+    void showExitHint();
+    void hideExitHint();
+    void releaseEscPress();
     static void onRouteChanged(void* context, const PageId& page);
     static void onKeyboardEvent(lv_event_t* event);
 };

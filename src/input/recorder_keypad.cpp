@@ -1,5 +1,7 @@
 #include "input/recorder_keypad.hpp"
 
+#include "core/recorder_types.hpp"
+
 #include <spdlog/spdlog.h>
 #include <cstdlib>
 
@@ -37,7 +39,8 @@ bool hasRecorderKeys(int fd)
 
     return testBit(key_bits, KEY_ESC) || testBit(key_bits, KEY_ENTER) || testBit(key_bits, KEY_KPENTER) ||
            testBit(key_bits, KEY_UP) || testBit(key_bits, KEY_DOWN) || testBit(key_bits, KEY_4) ||
-           testBit(key_bits, KEY_5) || testBit(key_bits, KEY_6) || testBit(key_bits, KEY_7) || testBit(key_bits, KEY_8);
+           testBit(key_bits, KEY_5) || testBit(key_bits, KEY_6) || testBit(key_bits, KEY_7) ||
+           testBit(key_bits, KEY_8) || testBit(key_bits, KEY_HELP);
 }
 
 bool envEnabled(const char* name, bool fallback)
@@ -287,6 +290,8 @@ uint32_t RecorderKeypad::translateKey(uint16_t code) const
     switch (code) {
         case KEY_ESC:
             return LV_KEY_ESC;
+        case KEY_HELP:
+            return recorder_key::Help;
         case KEY_ENTER:
         case KEY_KPENTER:
             return LV_KEY_ENTER;
