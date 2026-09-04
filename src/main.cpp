@@ -83,6 +83,8 @@ int main(int argc, char* argv[])
     recorder::RecorderKeypad keypad;
     keypad.setKeyCallback(
         [&app](uint32_t key, const char* utf8, bool pressed) { return app.onLvglKeyState(key, utf8, pressed); });
+    keypad.setMediaKeyCallback(
+        [&app](recorder::MediaKey key, bool pressed, bool repeated) { app.onMediaKeyState(key, pressed, repeated); });
     keypad.openDefault();
 #endif
 

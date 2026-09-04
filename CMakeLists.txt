@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.16)
 
-project(M5CardputerZeroRecorder VERSION 0.1.7 LANGUAGES C CXX ASM)
+project(M5CardputerZeroRecorder VERSION 0.1.8 LANGUAGES C CXX ASM)
 
 option(RECORDER_USE_SDL "Use LVGL's SDL backend for desktop testing" ON)
 option(RECORDER_CONVERT_ASSETS "Convert image assets during CMake configure" ON)
@@ -209,4 +209,16 @@ if(BUILD_TESTING)
         "${RECORDER_SRC_DIR}"
     )
     add_test(NAME recorder_playback_gain COMMAND recorder_playback_gain_tests)
+
+    add_executable(recorder_system_volume_tests
+        tests/system_volume_model_test.cpp
+        src/models/system_volume_model.cpp
+    )
+    target_include_directories(recorder_system_volume_tests PRIVATE
+        "${RECORDER_SRC_DIR}"
+    )
+    target_link_libraries(recorder_system_volume_tests PRIVATE
+        spdlog::spdlog
+    )
+    add_test(NAME recorder_system_volume COMMAND recorder_system_volume_tests)
 endif()

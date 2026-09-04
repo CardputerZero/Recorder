@@ -15,6 +15,12 @@ constexpr uint32_t Help = 0x10000003;
 
 }  // namespace recorder_key
 
+enum class MediaKey {
+    VolumeUp,
+    VolumeDown,
+    Mute,
+};
+
 enum class PageId {
     Recording,
     Files,

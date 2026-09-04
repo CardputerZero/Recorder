@@ -5,6 +5,7 @@
 #include "models/playback_model.hpp"
 #include "models/recording_files_model.hpp"
 #include "models/recording_model.hpp"
+#include "models/system_volume_model.hpp"
 #include "view_models/files_view_model.hpp"
 #include "view_models/playback_view_model.hpp"
 #include "view_models/recording_view_model.hpp"
@@ -13,6 +14,7 @@
 #include "views/playback_view.hpp"
 #include "views/recording_view.hpp"
 #include "views/view.hpp"
+#include "views/volume_hud.hpp"
 #include <lvgl.h>
 #include <array>
 #include <utility>
@@ -31,6 +33,7 @@ public:
     void onKey(uint32_t key);
     void onLvglKey(uint32_t lv_key, const char* utf8);
     bool onLvglKeyState(uint32_t lv_key, const char* utf8, bool pressed);
+    void onMediaKeyState(MediaKey key, bool pressed, bool repeated);
     void tick(uint32_t nowMs);
 
     bool quitRequested() const
@@ -50,6 +53,7 @@ private:
     RecordingFilesModel _files_model;
     PlaybackModel _playback_model;
     FeedbackToneModel _feedback_tone_model;
+    SystemVolumeModel _system_volume_model;
     RecordingViewModel _recording_vm;
     FilesViewModel _files_vm;
     PlaybackViewModel _playback_vm;
@@ -57,7 +61,8 @@ private:
     RecordingFilesView _recording_files_view;
     PlaybackView _playback_view;
     HelpView _help_view;
-    lv_obj_t* _exit_hint      = nullptr;
+    lv_obj_t* _exit_hint = nullptr;
+    VolumeHud _volume_hud;
     ViewModel* _current_vm    = nullptr;
     View* _current_view       = nullptr;
     lv_group_t* _input_group  = nullptr;

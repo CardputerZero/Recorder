@@ -40,7 +40,25 @@ bool hasRecorderKeys(int fd)
     return testBit(key_bits, KEY_ESC) || testBit(key_bits, KEY_ENTER) || testBit(key_bits, KEY_KPENTER) ||
            testBit(key_bits, KEY_UP) || testBit(key_bits, KEY_DOWN) || testBit(key_bits, KEY_4) ||
            testBit(key_bits, KEY_5) || testBit(key_bits, KEY_6) || testBit(key_bits, KEY_7) ||
-           testBit(key_bits, KEY_8) || testBit(key_bits, KEY_HELP);
+           testBit(key_bits, KEY_8) || testBit(key_bits, KEY_HELP) || testBit(key_bits, KEY_MUTE) ||
+           testBit(key_bits, KEY_VOLUMEDOWN) || testBit(key_bits, KEY_VOLUMEUP);
+}
+
+bool mediaKeyForCode(uint16_t code, MediaKey& media_key)
+{
+    switch (code) {
+        case KEY_VOLUMEUP:
+            media_key = MediaKey::VolumeUp;
+            return true;
+        case KEY_VOLUMEDOWN:
+            media_key = MediaKey::VolumeDown;
+            return true;
+        case KEY_MUTE:
+            media_key = MediaKey::Mute;
+            return true;
+        default:
+            return false;
+    }
 }
 
 bool envEnabled(const char* name, bool fallback)
@@ -205,6 +223,11 @@ void RecorderKeypad::setKeyCallback(KeyCallback callback)
     _key_callback = std::move(callback);
 }
 
+void RecorderKeypad::setMediaKeyCallback(MediaKeyCallback callback)
+{
+    _media_key_callback = std::move(callback);
+}
+
 void RecorderKeypad::readCb(lv_indev_t* indev, lv_indev_data_t* data)
 {
     auto* keypad = static_cast<RecorderKeypad*>(lv_indev_get_user_data(indev));
@@ -246,6 +269,24 @@ bool RecorderKeypad::ensureIndev()
 
 void RecorderKeypad::pushKeyEvent(uint16_t code, int32_t value)
 {
+#if !LV_USE_SDL && defined(__linux__)
+    MediaKey media_key = MediaKey::Mute;
+    if (mediaKeyForCode(code, media_key)) {
+        if (value != 0 && value != 1 && value != 2) {
+            return;
+        }
+
+        const bool repeated = value == 2;
+        if (repeated && media_key == MediaKey::Mute) {
+            return;
+        }
+        if (_media_key_callback) {
+            _media_key_callback(media_key, value != 0, repeated);
+        }
+        return;
+    }
+#endif
+
     if (value != 0 && value != 1) {
         return;
     }
